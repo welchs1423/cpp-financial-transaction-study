@@ -1,0 +1,1 @@
+void sqlcxt (void **, unsigned int *, struct sqlexd *, const struct sqlcxp *);
