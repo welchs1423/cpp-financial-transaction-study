@@ -4,7 +4,6 @@
 #include <sqlca.h>
 
 EXEC SQL BEGIN DECLARE SECTION;
-    // [수정됨] IP 명시 및 AS SYSDBA 추가
     char *user = "system/Password123!@//127.0.0.1:1521/xepdb1";
     char acc_no[20];
     char user_name[40];
@@ -18,7 +17,6 @@ int printf(const char *format, ...);
 void sql_error(const char *msg){
     printf("\n=== Error Occurred ===\n");
     printf("%s\n", msg);
-    // [수정됨] 상세 에러 메시지 출력
     printf("SQL Code: %d\n", sqlca.sqlcode);
     printf("Error Message: %.*s\n", sqlca.sqlerrm.sqlerrml, sqlca.sqlerrm.sqlerrmc);
     printf("======================\n");
