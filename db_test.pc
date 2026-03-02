@@ -16,6 +16,12 @@ EXEC SQL BEGIN DECLARE SECTION;
     VARCHAR target_name[20];    // 이체 대상 고객명
     long current_balance;
     long amount;
+
+    // 커서 패치용 호스트 변수 추가
+    int h_seq;
+    VARCHAR h_trans_type[30];
+    VARCHAR h_trans_date[30];
+    long h_amount;
 EXEC SQL END DECLARE SECTION;
 
 /* 숫자에 천 단위 콤마를 찍어주는 함수 */
@@ -207,13 +213,60 @@ void do_transfer(){
     printf("[오류] 이체 처리 중 문제가 발생하여 모든 작업이 취소되었습니다. (Code: %d) \n", sqlca.sqlcode);
 }
 
+/* 6. 거래 내역 조회 (C 언어 카운터 제어 방식) */
+void show_history(){
+    /* C 언어에서 5건을 세기 위한 카운터 변수 추가 */
+    int count = 0; 
+
+    printf("\n========== [%s] 고객님 최근 거래 내역 ==========\n", user_name.arr);
+    printf(" 번호 | 구분       | 금액            | 거래일시\n");
+    printf("--------------------------------------------------\n");
+
+    EXEC SQL DECLARE history_cursor CURSOR FOR
+        SELECT SEQ, TRANS_TYPE, AMOUNT, TO_CHAR(TRANS_DATE, 'YYYY-MM-DD HH24:MI:SS')
+        FROM TRANSACTION_HISTORY
+        WHERE ACC_NO = :acc_no
+        ORDER BY SEQ DESC;
+
+    /* 커서 열기 (여기서 에러가 나면 바로 출력하도록 방어 로직 추가) */
+    EXEC SQL OPEN history_cursor;
+    if (sqlca.sqlcode != 0) {
+        printf(" [!] 커서 열기 실패 (Code: %d)\n", sqlca.sqlcode);
+        return;
+    }
+
+    /* 한 줄씩 꺼내오기 */
+    while(1){
+        EXEC SQL FETCH history_cursor INTO :h_seq, :h_trans_type, :h_amount, :h_trans_date;
+
+        if (sqlca.sqlcode == 1403) break;
+        if (sqlca.sqlcode != 0) {
+            printf(" [!] 데이터 로드 중 알 수 없는 문제 발생 (Code: %d)\n", sqlca.sqlcode);
+            break;
+        }
+
+        count++;
+        if (count > 5) break;
+
+        /* VARCHAR 널문자 처리 */
+        h_trans_type.arr[h_trans_type.len] = '\0';
+        h_trans_date.arr[h_trans_date.len] = '\0';
+
+        printf(" %4d | %-10s | %15s원 | %s\n",
+                h_seq, h_trans_type.arr, format_comma(h_amount), h_trans_date.arr);
+    }
+
+    /* 커서 닫기 */
+    EXEC SQL CLOSE history_cursor;
+    printf("==================================================\n");    
+}
+
 /* ================= 메인 함수 ================= */
 int main() {
     putenv("NLS_LANG=KOREAN_KOREA.AL32UTF8");
     int choice;
 
     printf("1. 시스템 부팅 중...\n");
-
     EXEC SQL CONNECT :user_id;
     if (sqlca.sqlcode < 0) sql_error("DB 연결 실패!");
     printf("2. 오라클 DB 연결 성공!\n");
@@ -224,12 +277,12 @@ int main() {
 
     while(1) {
         printf("\n========== C-STOCK ATM ==========\n");
-        printf(" 1. 잔액조회  2. 입금  3. 출금  4. 계좌이체  5. 종료\n");
+        printf(" 1. 잔액조회  2. 입금  3. 출금  4. 계좌이체  5. 거래내역 6. 종료\n");
         printf("=================================\n");
         printf("메뉴를 선택하세요: ");
         scanf("%d", &choice);
 
-        if (choice == 5) {
+        if (choice == 6) {
             printf("\n이용해 주셔서 감사합니다. 시스템을 종료합니다.\n");
             break;
         }
@@ -239,7 +292,8 @@ int main() {
             case 2: do_deposit(); break;
             case 3: do_withdraw(); break;
             case 4: do_transfer(); break;
-            default: printf("\n[경고] 잘못된 메뉴를 선택하셨습니다. (1~5 입력)\n");
+            case 5: show_history(); break;\
+            default: printf("\n[경고] 잘못된 메뉴를 선택하셨습니다. (1~6 입력)\n");
         }
     }
 

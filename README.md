@@ -1,12 +1,51 @@
-# C-STOCK 프로젝트
-C 언어와 Oracle DB를 이용한 계좌 관리 프로그램
+# C-Stock ATM
+오라클 데이터베이스와 Pro*C를 활용하여 코어 뱅킹(Core Banking) 시스템의 필수 로직을 구현한 콘솔 ATM 애플리케이션입니다.
 
-## 현재 진행 상황
- - 리눅스 개발 환경 구축 (WSL2)
- - Oracle 21c DB 서버 구축 (Docker)
- - 기본 계좌 테이블 (`ACCOUNT`) 생성 완료
- - C 언어 파일 입출력 로직 구현
- - 동적 사용자 입력 및 ATM 무한 루프 구현 완료
+## 🛠️ 기술 스택 및 환경 (Tech Stack & Environment)
+- **Language**: C (Oracle Pro*C)
+- **Database**: Oracle Database 21c (XE)
+- **Infrastructure**: Docker (Oracle Container), WSL2 (Ubuntu)
+- **Compiler**: GCC, `proc` (Oracle Precompiler)
+- **Version Control**: Git, GitHub
+
+## 🧠 핵심 구현 기술 (Key Technologies)
+- **Embedded SQL**: C 코드 내부에 SQL을 직접 삽입하고 호스트 변수를 바인딩하여 DB와 실시간으로 통신하는 로직 구현.
+- **Transaction Management**: 계좌 이체 시 출금과 입금 중 하나라도 실패하면 전체 작업을 취소(`ROLLBACK`)하고, 모두 성공 시에만 반영(`COMMIT`)하는 데이터 무결성(Atomicity) 제어.
+- **Cursor Data Fetching**: `DECLARE`, `OPEN`, `FETCH`, `CLOSE` 사이클과 C 언어 루프 제어를 결합하여, 다수의 거래 내역을 안전하게 가져오는 다중 행(Multi-row) 조회 기능 구현.
+- **Data Type Conversion**: 오라클 전용 `VARCHAR` 구조체 타입과 C 언어의 `char*` 문자열 간의 형변환 및 널문자(`\0`) 수동 제어를 통한 데이터 잘림(Truncation) 방지.
+- **Modular Architecture**: 단일 `main()` 함수에 몰려있던 스파게티 코드를 기능별(로그인, 조회, 입금, 출금, 이체 등)로 분리하여 유지보수성 극대화.
+
+---
+
+## 📖 공통 가이드 및 환경 설정
+
+### 1. 필수 라이브러리 설치
+C 언어와 Oracle의 통신을 위해 `libaio1` 패키지 설치.
+```bash
+sudo apt-get update
+sudo apt-get install -y libaio1
+
+아차! 중간에 들어간 bash 코드 블록(```) 때문에 마크다운 블록이 중간에 끊겨버렸네요. 바보 같은 실수를 했습니다! 😅
+
+이번에는 중간에 끊기지 않도록 완벽하게 마크다운 블록 하나로 통째로 감싸서 드립니다. 바로 우측 상단의 '복사' 버튼을 눌러서 가져가세요!
+
+Markdown
+# C-Stock ATM
+오라클 데이터베이스와 Pro*C를 활용하여 코어 뱅킹(Core Banking) 시스템의 필수 로직을 구현한 콘솔 ATM 애플리케이션입니다.
+
+## 🛠️ 기술 스택 및 환경 (Tech Stack & Environment)
+- **Language**: C (Oracle Pro*C)
+- **Database**: Oracle Database 21c (XE)
+- **Infrastructure**: Docker (Oracle Container), WSL2 (Ubuntu)
+- **Compiler**: GCC, `proc` (Oracle Precompiler)
+- **Version Control**: Git, GitHub
+
+## 🧠 핵심 구현 기술 (Key Technologies)
+- **Embedded SQL**: C 코드 내부에 SQL을 직접 삽입하고 호스트 변수를 바인딩하여 DB와 실시간으로 통신하는 로직 구현.
+- **Transaction Management**: 계좌 이체 시 출금과 입금 중 하나라도 실패하면 전체 작업을 취소(`ROLLBACK`)하고, 모두 성공 시에만 반영(`COMMIT`)하는 데이터 무결성(Atomicity) 제어.
+- **Cursor Data Fetching**: `DECLARE`, `OPEN`, `FETCH`, `CLOSE` 사이클과 C 언어 루프 제어를 결합하여, 다수의 거래 내역을 안전하게 가져오는 다중 행(Multi-row) 조회 기능 구현.
+- **Data Type Conversion**: 오라클 전용 `VARCHAR` 구조체 타입과 C 언어의 `char*` 문자열 간의 형변환 및 널문자(`\0`) 수동 제어를 통한 데이터 잘림(Truncation) 방지.
+- **Modular Architecture**: 단일 `main()` 함수에 몰려있던 스파게티 코드를 기능별(로그인, 조회, 입금, 출금, 이체 등)로 분리하여 유지보수성 극대화.
 
 ---
 
@@ -30,100 +69,32 @@ sudo apt-get install -y libaio1
 
 ---
 
-## 📝 개발 및 트러블슈팅 히스토리 (최신순)
+## 📅 업데이트 내역 (Changelog)
 
-### [2026-02-25] 계좌 이체(Transfer) 트랜잭션 구현 및 컬럼 크기 오류 해결
-- **구현 내역**:
-  - **계좌 이체 로직 (`do_transfer`)**: 송금 계좌 출금(`UPDATE`)과 수취 계좌 입금(`UPDATE`), 그리고 각각의 거래 내역 저장(`INSERT`)을 하나의 트랜잭션으로 묶어 처리.
-  - **안전한 트랜잭션 제어**: 4개의 DML 중 하나라도 실패 시 `goto` 문을 활용하여 전체 `ROLLBACK` 수행, 모두 성공 시에만 `COMMIT` 보장.
-- **트러블슈팅**:
-  - **ORA-12899 (Value too large for column)**:
-    - 현상: "이체출금" 문자열 `INSERT` 시 에러가 발생하며 트랜잭션이 롤백됨 (단, ROLLBACK 자체가 성공하면서 `sqlca.sqlcode`가 0으로 덮어씌워져 에러 추적이 어려웠음).
-    - 원인: `TRANS_TYPE` 컬럼 크기가 `VARCHAR2(10)`으로 설정되어, AL32UTF8 인코딩 환경에서 한글 4글자(12바이트)를 수용하지 못함.
-    - 해결: `ALTER TABLE`을 사용하여 컬럼 크기를 `VARCHAR2(30)`으로 확장하여 해결.
+### [2026-03-03]
+- **거래 내역 조회**: Pro*C 커서를 활용한 최근 거래 내역 5건 출력 기능 구현.
+- **데이터 안정성**: 전역 호스트 변수를 `VARCHAR` 구조체로 변경하여 문자열 처리 안정성 강화.
 
-### [2026-02-25] 출력 포맷 개선 및 천 단위 콤마 기능 추가
-- **구현 내역**:
-  - **금액 가독성 향상**: `format_comma` 사용자 정의 함수를 추가하여 잔액 조회, 입금/출금 성공 메시지 출력 시 천 단위 콤마(,)가 표시되도록 개선.
-  - **C 문자열 조작**: `sprintf`와 `strlen`을 활용하여 숫자 데이터를 포맷팅된 문자열로 변환하는 로직 적용.
+### [2026-02-25]
+- **계좌 이체 시스템**: 출금/입금/내역 저장을 하나의 트랜잭션으로 묶은 이체 로직 구현.
+- **UI 개선**: 금액 출력 시 천 단위 콤마(,) 표시를 위한 `format_comma` 함수 도입.
 
-### [2026-02-23] 풀옵션 리팩토링 및 거래 내역 테이블 연동
-- **구현 내역**:
-  - **계좌 동적 로그인**: 하드코딩된 계좌번호를 제거하고, 실행 시 계좌번호를 입력받아 DB 검증(SELECT) 후 진행하도록 변경.
-  - **코드 모듈화(리팩토링)**: `main()`에 몰려있던 로직을 `login()`, `check_balance()`, `do_deposit()`, `do_withdraw()` 함수로 분리하여 유지보수성 향상.
-  - **거래 내역 추적**: `TRANSACTION_HISTORY` 테이블을 설계하고, 입/출금 성공 시 거래 내역이 자동으로 `INSERT` 되는 로직 적용.
-- **트러블슈팅**:
-  - **Pro*C 한글 리터럴 인식 오류 (PCC-S-02021)**:
-    - 현상: `INSERT` 쿼리 내 한글 문자열('입금') 사용 시 `Found newline while scanning string literal` 컴파일 에러 발생.
-    - 원인: Pro*C 번역기(`proc`)가 한글의 UTF-8 바이트를 줄바꿈이나 특수문자로 오인하여 파싱 실패.
-    - 해결: 쿼리에 한글을 직접 쓰지 않고, C 언어 `char` 배열(`trans_type`)에 `strcpy`로 문자열을 담은 뒤 호스트 변수(`:trans_type`)로 바인딩하여 안전하게 DB로 전달.
+### [2026-02-23]
+- **보안 및 세션**: 동적 계좌 로그인 시스템 및 `TRANSACTION_HISTORY` 테이블 설계/연동.
+- **리팩토링**: `main` 로직 기능별 함수화 및 코드 구조 최적화.
 
-### [2026-02-19] ATM 메뉴 무한루프 구현 및 파싱 에러 해결
-- **구현 내역**:
-  - `while(1)`과 `switch-case`를 활용하여 프로그램 종료 전까지 입금/출금/조회를 반복할 수 있는 ATM 무한 루프 시스템 도입.
-- **트러블슈팅**:
-  - **Pro*C 줄바꿈 인식 오류 (unknown type name ‘WHERE’)**:
-    - 현상: `gcc` 컴파일 중 SQL의 `WHERE` 절을 C 언어 타입으로 잘못 인식하여 에러 발생.
-    - 원인: `parse=none` 옵션 사용 시, Pro*C가 여러 줄로 작성된 `EXEC SQL` 문장을 끝까지 파싱하지 못하고 잘라먹는 현상 발생.
-    - 해결: `EXEC SQL`부터 세미콜론(`;`)까지의 쿼리 문장을 줄바꿈 없이 한 줄로 이어서 작성하여 해결.
+### [2026-02-12 ~ 02-19]
+- **기초 구축**: Docker 기반 Oracle 21c 환경 설정 및 ATM 기본 무한 루프(`switch-case`) 구현.
+- **트랜잭션 기초**: 입출금 로직(`SELECT` -> `UPDATE`) 및 한글 인코딩 설정 완료.
 
-### [2026-02-18] 사용자 상호작용 및 자동화 적용
-- **구현 내역**:
-  - 동적 출금 기능 구현 (`scanf`): 하드코딩된 금액 대신 실행 시 사용자로부터 직접 출금액을 입력받도록 개선.
-  - 유효성 검사: 0원 이하 입력 방지 및 잔액 부족 시 트랜잭션 보호 로직 검증.
-  - 환경 변수 내재화 (`putenv`): 소스 코드 내 `putenv("NLS_LANG=...")` 추가로 터미널 `export` 명령 없이 한글 정상 출력.
+---
 
-### [2026-02-14] 출금 로직 구현 및 빌드 환경 최적화
-- **구현 내역**:
-  - 트랜잭션 제어: 조회(SELECT) 후 조건 검증을 통한 출금(UPDATE) 로직 구현.
-  - 환경 구축: Docker 내부 오라클 헤더를 로컬 빌드 환경(`include/`)에 통합.
-- **트러블슈팅**:
-  - **GCC 헤더 참조 에러 (sqlda.h, sqlcpr.h)**:
-    - 원인: 오라클 전용 헤더 파일들이 표준 include 경로에 없음.
-    - 해결: `precomp/public` 디렉토리를 로컬 `./include`로 전체 복사 후 `-I./include` 옵션으로 빌드.
-  - **Docker 실행 오류**:
-    - 현상: `command 'docker' could not be found` 발생.
-    - 원인: Docker Desktop 미실행 및 WSL2 연동 해제.
-    - 해결: Docker Desktop 실행 및 Settings에서 WSL Integration 재활성화.
-  - **Pro*C 미정의 식별자 에러 (PCC-S-02322)**:
-    - 해결: 호스트 변수명 오타 (`user_kd` vs `user_id`) 수정.
+## 🛠️ 주요 트러블슈팅 (Troubleshooting)
 
-### [2026-02-13] 환경 구축 및 구현 완료 내역
-- [x] `SELECT` -> `UPDATE` -> `COMMIT` 트랜잭션 로직 구현 및 검증 완료
-- [x] 테스트 계정 잔액 **5,000,000원** 도달 확인
-- [x] 한글 고객명("홍길동") 정상 출력 및 인코딩 문제 해결
-- [x] Pro*C 프리컴파일부터 GCC 빌드까지의 원라인 커맨드 최적화
-
-- **트러블슈팅 로그 (2026-02-13)**
-  - **Pro*C 컴파일 에러 (PCC-S-02201)**: 
-    - 현상: `stdio.h` 등 시스템 헤더 해석 중 구문 에러 발생.
-    - 원인: Pro*C 번역기가 C 표준 라이브러리의 복잡한 매크로 구조를 해석하지 못함.
-    - 해결: `proc` 옵션에 `parse=none`을 추가하여 SQL 문장만 해석하도록 설정.
-  - **DB 연결 지연 (Hanging)**: 
-    - 원인: WSL 환경에서 TNS 서비스 별칭(`xepdb1`) 인식 실패로 인한 무한 대기 발생.
-    - 해결: 접속 문자열을 **EZConnect** 방식(`127.0.0.1:1521/xepdb1`)으로 명시하여 해결.
-  - **한글 깨짐 및 데이터 주입 오류**: 
-    - 현상: 고객명 출력 시 깨진 문자() 발생.
-    - 해결: 
-      - 도커 접속 시 `-e NLS_LANG=KOREAN_KOREA.AL32UTF8` 옵션을 주입하여 SQL*Plus에서 데이터 업데이트.
-      - SQL 문에 `TRIM()` 함수 적용 및 호스트 변수를 `VARCHAR` 타입으로 선언하여 공백 문제 해결.
-  - **Bash 특수문자(`!`) 인식 오류**: 
-    - 현상: 비밀번호에 `!` 포함 시 `event not found` 발생.
-    - 해결: 접속 정보를 **작은따옴표(`' '`)**로 감싸서 리눅스 쉘의 해석 방지.
-
-### [2026-02-12] 환경 구축 완료 내역
-- [x] Oracle 21c XE Docker 컨테이너 설치 및 실행
-- [x] SQL*Plus를 통한 `ACCOUNT` 테이블 설계 및 데이터 인서트 (`COMMIT` 완료)
-- [x] Ubuntu `libaio1` 패키지 설치 및 `sudo` 권한 문제 해결
-- [x] Oracle Instant Client 21.13 SDK/Basic 설정
-- [x] `.bashrc` 환경 변수 최적화 및 공유 라이브러리(`so`) 링크 검증 완료
-
-- **트러블슈팅 로그 (2026-02-12)**
-  - **에러 ORA-12514 (TNS:listener...)**: 
-    - 원인: 접속 문자열의 서비스 이름(`xe`)이 실제 리스너에 등록된 이름과 불일치.
-    - 해결: 오라클 21c XE의 PDB 서비스 이름인 `xepdb1`으로 접속 문자열 수정.
-  - **파일 누락 (sqlcxt.h)**:
-    - 현상: `docker cp` 시 오라클 엔진 내에서 `sqlcxt.h`를 찾지 못함.
-    - 해결: `sqlcxt` 함수 선언이 포함된 더미 헤더 파일을 직접 생성하여 컴파일 성공.
-  - **사용자 권한 문제**:
-    - `SYS` 계정 접속 시 반드시 `AS SYSDBA` 문구를 접속 문자열 끝에 포함해야 함.
+| 날짜 | 이슈 | 원인 및 해결 |
+|:---:|:---|:---|
+| **03-03** | **ORA-01002** | Pro*C 구형 파서의 최신 `FETCH` 문법 인식 오류 → 기본 쿼리와 C 카운터 변수 조합으로 해결. |
+| **02-25** | **ORA-12899** | 한글 바이트 수(UTF-8) 계산 착오로 인한 컬럼 크기 부족 → `VARCHAR2(30)`으로 확장. |
+| **02-23** | **PCC-S-02021** | 쿼리 내 한글 리터럴 파싱 오류 → C 변수에 `strcpy` 후 호스트 변수로 바인딩하여 전달. |
+| **02-19** | **Syntax Error** | `parse=none` 시 여러 줄 쿼리 파싱 실패 → `EXEC SQL` 문장을 줄바꿈 없이 한 줄로 작성. |
+| **02-13** | **Hanging** | TNS 별칭 인식 실패 → **EZConnect**(`127.0.0.1:1521/xepdb1`) 방식으로 즉시 해결. |
