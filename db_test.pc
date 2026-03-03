@@ -10,14 +10,16 @@ EXEC SQL INCLUDE sqlca;
 EXEC SQL BEGIN DECLARE SECTION;
     char *user_id = "system/Password123!@127.0.0.1:1521/xepdb1";
     char acc_no[20];
-    char trans_type[20]; /* 한글 '입금/출금'을 담을 새 변수 추가 */
-    char target_acc[20];    // 이체 대상 계좌번호
+    char trans_type[30]; 
+    char target_acc[20];
     VARCHAR user_name[20];
-    VARCHAR target_name[20];    // 이체 대상 고객명
+    VARCHAR target_name[20];
     long current_balance;
     long amount;
+    char db_pw[10];   // DB에서 가져온 비밀번호 저장용
+    char db_p[10];    // 변경 시 현재 비밀번호 검증용
+    char n_pw[10];    // 새 비밀번호 저장용
 
-    // 커서 패치용 호스트 변수 추가
     int h_seq;
     VARCHAR h_trans_type[30];
     VARCHAR h_trans_date[30];
@@ -48,26 +50,6 @@ void sql_error(char *msg) {
     printf("Message: %.*s\n", sqlca.sqlerrm.sqlerrml, sqlca.sqlerrm.sqlerrmc);
     EXEC SQL ROLLBACK WORK RELEASE;
     exit(1);
-}
-
-/* 1. 계좌 로그인 함수 */
-int login() {
-    printf("\n작업할 계좌번호를 입력하세요 (예: 110-123-456): ");
-    scanf("%s", acc_no);
-
-    EXEC SQL SELECT USER_NAME INTO :user_name FROM ACCOUNT WHERE ACC_NO = :acc_no;
-
-    if (sqlca.sqlcode == 1403) {
-        printf("[실패] 등록되지 않은 계좌번호입니다.\n");
-        return 0;
-    } else if (sqlca.sqlcode != 0) {
-        printf("[오류] DB 조회 중 에러 발생 (Code: %d)\n", sqlca.sqlcode);
-        return 0;
-    }
-
-    user_name.arr[user_name.len] = '\0';
-    printf("\n[환영합니다] %s 고객님, 인증되었습니다.\n", user_name.arr);
-    return 1;
 }
 
 /* 2. 잔액 조회 함수 */
@@ -259,6 +241,69 @@ void show_history(){
     /* 커서 닫기 */
     EXEC SQL CLOSE history_cursor;
     printf("==================================================\n");    
+}
+
+int login() {
+    char input_pw[10];
+    char db_pw[10];
+    
+    // 한글 출력 시 줄바꿈 문제 방지를 위해 printf를 단순화
+    printf("\n계좌번호 입력: ");
+    scanf("%s", acc_no);
+
+    /* PASSWD 컬럼 추가 여부 확인 필수 */
+    EXEC SQL SELECT USER_NAME, PASSWD INTO :user_name, :db_pw 
+             FROM ACCOUNT WHERE ACC_NO = :acc_no;
+
+    if (sqlca.sqlcode == 1403) {
+        printf("[실패] 존재하지 않는 계좌입니다.\n");
+        return 0;
+    }
+
+    printf("비밀번호 입력: ");
+    scanf("%s", input_pw);
+
+    /* DB에서 가져온 PASSWD 뒤의 공백 제거 (중요) */
+    db_pw[4] = '\0'; 
+
+    if (strcmp(input_pw, db_pw) != 0) {
+        printf("[실패] 비밀번호 불일치\n");
+        return 0;
+    }
+
+    user_name.arr[user_name.len] = '\0';
+    printf("\n[환영합니다] %s 고객님\n", user_name.arr);
+    return 1;
+}
+
+void change_password() {
+    char cur_pw[10], n_pw[10], c_pw[10], db_p[10];
+
+    printf("\n--- 비밀번호 변경 ---\n");
+    printf("현재 PW: ");
+    scanf("%s", cur_pw);
+
+    EXEC SQL SELECT PASSWD INTO :db_p FROM ACCOUNT WHERE ACC_NO = :acc_no;
+    db_p[4] = '\0';
+
+    if (strcmp(cur_pw, db_p) != 0) {
+        printf("[실패] 현재 비밀번호 오류\n");
+        return;
+    }
+
+    printf("새 PW(4자리): ");
+    scanf("%s", n_pw);
+    printf("새 PW 확인: ");
+    scanf("%s", c_pw);
+
+    if (strcmp(n_pw, c_pw) != 0) {
+        printf("[실패] 일치하지 않음\n");
+        return;
+    }
+
+    EXEC SQL UPDATE ACCOUNT SET PASSWD = :n_pw WHERE ACC_NO = :acc_no;
+    EXEC SQL COMMIT;
+    printf("[성공] 변경 완료\n");
 }
 
 /* ================= 메인 함수 ================= */
