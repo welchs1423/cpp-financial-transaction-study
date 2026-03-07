@@ -1,258 +1,77 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sqlda.h>
 #include <sqlca.h>
 
-EXEC SQL INCLUDE sqlca;
-
-/* [전역 호스트 변수 선언] */
+/* =========================================
+   [1] 전역 호스트 변수 선언 (DECLARE SECTION)
+   ========================================= */
 EXEC SQL BEGIN DECLARE SECTION;
     char *user_id = "system/Password123!@127.0.0.1:1521/xepdb1";
     char acc_no[20];
-    char trans_type[30]; 
-    char target_acc[20];
-    VARCHAR user_name[20];
-    VARCHAR target_name[20];
+    VARCHAR user_name[40];
     long current_balance;
-    long amount;
-    char db_pw[10];   // DB에서 가져온 비밀번호 저장용
-    char db_p[10];    // 변경 시 현재 비밀번호 검증용
-    char n_pw[10];    // 새 비밀번호 저장용
+    
+    /* 비밀번호 및 권한용 */
+    char db_pw[15];
+    char n_pw[15];
+    char db_p[15];
+    char db_role[2];
 
-    int h_seq;
-    VARCHAR h_trans_type[30];
-    VARCHAR h_trans_date[30];
-    long h_amount;
+    /* 관리자 조회 커서용 */
+    char a_acc_no[20];
+    VARCHAR a_user_name[40];
+    long a_balance;
+
+    /* 입출금/이체용 */
+    long amount;
+    char target_acc[20];
+    VARCHAR target_name[40];
 EXEC SQL END DECLARE SECTION;
 
-/* 숫자에 천 단위 콤마를 찍어주는 함수 */
-char* format_comma(long num) {
-    static char buf[30];
-    char temp[30];
-    int i, j = 0, len;
-    sprintf(temp, "%ld", num);
-    len = strlen(temp);
-    for (i = 0; i < len; i++) {
-        if (i > 0 && (len - i) % 3 == 0) {
-            buf[j++] = ',';
-        }
-        buf[j++] = temp[i];
-    }
-    buf[j] = '\0';
-    return buf;
-}
-
-/* 에러 핸들링 함수 */
-void sql_error(char *msg) {
-    printf("\n[치명적 오류] %s\n", msg);
-    printf("SQL Code: %d\n", sqlca.sqlcode);
-    printf("Message: %.*s\n", sqlca.sqlerrm.sqlerrml, sqlca.sqlerrm.sqlerrmc);
-    EXEC SQL ROLLBACK WORK RELEASE;
-    exit(1);
-}
-
-/* 2. 잔액 조회 함수 */
-void check_balance() {
-    EXEC SQL SELECT BALANCE INTO :current_balance FROM ACCOUNT WHERE ACC_NO = :acc_no;
-    
-    if (sqlca.sqlcode == 0) {
-        printf("\n[잔액조회] %s 고객님의 현재 잔액은 %s원 입니다.\n", user_name.arr, format_comma(current_balance));
-    } else {
-        printf("\n[오류] 계좌 정보를 찾을 수 없습니다.\n");
-    }
-}
-
-/* 3. 입금 함수 (+ 거래내역 저장) */
-void do_deposit() {
-    printf("\n입금하실 금액을 입력하세요: ");
-    scanf("%ld", &amount);
-    
-    if (amount <= 0) {
-        printf("[경고] 0원보다 큰 금액을 입력해야 합니다.\n");
-        return;
-    }
-
-    EXEC SQL UPDATE ACCOUNT SET BALANCE = BALANCE + :amount WHERE ACC_NO = :acc_no;
-    
-    if (sqlca.sqlcode == 0) {
-        /* 한글 리터럴 대신 변수 사용 */
-        strcpy(trans_type, "입금");
-        EXEC SQL INSERT INTO TRANSACTION_HISTORY (ACC_NO, TRANS_TYPE, AMOUNT) VALUES (:acc_no, :trans_type, :amount);
-        
-        if (sqlca.sqlcode == 0) {
-            EXEC SQL COMMIT;
-            printf("[성공] %s원이 입금되었습니다.\n", format_comma(amount));
-        } else {
-            EXEC SQL ROLLBACK;
-            printf("[오류] 거래내역 저장 실패 (Code: %d)\n", sqlca.sqlcode);
-        }
-    } else {
-        EXEC SQL ROLLBACK;
-        printf("[오류] 입금 처리 실패.\n");
-    }
-}
-
-/* 4. 출금 함수 (+ 거래내역 저장) */
-void do_withdraw() {
-    printf("\n출금하실 금액을 입력하세요: ");
-    scanf("%ld", &amount);
-
-    if (amount <= 0) {
-        printf("[경고] 0원보다 큰 금액을 입력해야 합니다.\n");
-        return;
-    }
-
-    EXEC SQL SELECT BALANCE INTO :current_balance FROM ACCOUNT WHERE ACC_NO = :acc_no;
-    
-    if (current_balance < amount) {
-        printf("[실패] 잔액이 부족합니다. (현재 잔액: %ld원)\n", current_balance);
-        return;
-    }
-
-    EXEC SQL UPDATE ACCOUNT SET BALANCE = BALANCE - :amount WHERE ACC_NO = :acc_no;
-    
-    if (sqlca.sqlcode == 0) {
-        /* 한글 리터럴 대신 변수 사용 */
-        strcpy(trans_type, "출금");
-        EXEC SQL INSERT INTO TRANSACTION_HISTORY (ACC_NO, TRANS_TYPE, AMOUNT) VALUES (:acc_no, :trans_type, :amount);
-
-        if (sqlca.sqlcode == 0) {
-            EXEC SQL COMMIT;
-            printf("[성공] %s원이 정상적으로 출금되었습니다.\n", format_comma(amount));
-        } else {
-            EXEC SQL ROLLBACK;
-            printf("[오류] 거래내역 저장 실패 (Code: %d)\n", sqlca.sqlcode);
-        }
-    } else {
-        EXEC SQL ROLLBACK;
-        printf("[오류] 출금 처리 실패.\n");
-    }
-}
-
-// 5. 계좌 이체 함수
-void do_transfer(){
-    printf("\n송금받을 계좌번호를 입력하세요: ");
-    scanf("%s", target_acc);
-
-    // 본인 계좌로 이체 방지
-    if(strcmp(acc_no, target_acc) == 0){
-        printf("[오류] 본인 계좌로는 이체할 수 없습니다.\n");
-        return;
-    }
-
-    //상대방 계좌 존재 여부 및 이름 확인
-    EXEC SQL SELECT USER_NAME INTO :target_name FROM ACCOUNT WHERE ACC_NO = :target_acc;
-    if(sqlca.sqlcode != 0){
-        printf("[오류] 존재하지 않는 계좌번호입니다.\n");
-        return;
-    }
-    target_name.arr[target_name.len] = '\0';
-
-    printf("이체하실 금액을 입력하세요: ");
-    scanf("%ld", &amount);
-
-    if(amount <= 0){
-        printf("[경고] 0원보다 큰 금액을 입력해야 합니다.\n");
-        return;
-    }
-
-    // 내 계좌 잔액 확인
-    EXEC SQL SELECT BALANCE INTO :current_balance FROM ACCOUNT WHERE ACC_NO = :acc_no;
-    if(current_balance < amount){
-        printf("[실패] 잔액이 부족합니다. (현재 잔액: %s원)\n", format_comma(current_balance));
-        return;
-    }
-
-    printf("\n[%s] 님에게 %s원을 이체합니다. 진행 중...\n", target_name.arr, format_comma(amount));
-
-    //1. 내 계좌 출금
-    EXEC SQL UPDATE ACCOUNT SET BALANCE = BALANCE - :amount WHERE ACC_NO = :acc_no;
-    if (sqlca.sqlcode != 0) goto transfer_rollback;
-
-    // 2. 상대방 계좌 입금
-    EXEC SQL UPDATE ACCOUNT SET BALANCE = BALANCE + :amount WHERE ACC_NO = :target_acc;
-    if (sqlca.sqlcode != 0) goto transfer_rollback;
-
-    // 3. 내 거래내역 저장
-    strcpy(trans_type, "이체출금");
-    EXEC SQL INSERT INTO TRANSACTION_HISTORY (ACC_NO, TRANS_TYPE, AMOUNT) VALUES (:acc_no, :trans_type, :amount);
-    if(sqlca.sqlcode != 0) goto transfer_rollback;
-
-    // 4. 상대방 거래내역 저장
-    strcpy(trans_type, "이체입금");
-    EXEC SQL INSERT INTO TRANSACTION_HISTORY(ACC_NO, TRANS_TYPE, AMOUNT) VALUES (:target_acc, :trans_type, :amount);
-    if(sqlca.sqlcode != 0) goto transfer_rollback;
-
-    // 모든 과정이 성공하면 COMMIT
-    EXEC SQL COMMIT;
-    printf("[성공] 이체가 완료되었습니다!\n");
-    return;
-
-    transfer_rollback:
-    // 중간에 하나라도 실패하면 모두 취소
-    EXEC SQL ROLLBACK;
-    printf("[오류] 이체 처리 중 문제가 발생하여 모든 작업이 취소되었습니다. (Code: %d) \n", sqlca.sqlcode);
-}
-
-/* 6. 거래 내역 조회 (C 언어 카운터 제어 방식) */
-void show_history(){
-    /* C 언어에서 5건을 세기 위한 카운터 변수 추가 */
-    int count = 0; 
-
-    printf("\n========== [%s] 고객님 최근 거래 내역 ==========\n", user_name.arr);
-    printf(" 번호 | 구분       | 금액            | 거래일시\n");
-    printf("--------------------------------------------------\n");
-
-    EXEC SQL DECLARE history_cursor CURSOR FOR
-        SELECT SEQ, TRANS_TYPE, AMOUNT, TO_CHAR(TRANS_DATE, 'YYYY-MM-DD HH24:MI:SS')
-        FROM TRANSACTION_HISTORY
-        WHERE ACC_NO = :acc_no
-        ORDER BY SEQ DESC;
-
-    /* 커서 열기 (여기서 에러가 나면 바로 출력하도록 방어 로직 추가) */
-    EXEC SQL OPEN history_cursor;
-    if (sqlca.sqlcode != 0) {
-        printf(" [!] 커서 열기 실패 (Code: %d)\n", sqlca.sqlcode);
-        return;
-    }
-
-    /* 한 줄씩 꺼내오기 */
-    while(1){
-        EXEC SQL FETCH history_cursor INTO :h_seq, :h_trans_type, :h_amount, :h_trans_date;
-
-        if (sqlca.sqlcode == 1403) break;
-        if (sqlca.sqlcode != 0) {
-            printf(" [!] 데이터 로드 중 알 수 없는 문제 발생 (Code: %d)\n", sqlca.sqlcode);
-            break;
-        }
-
+/* =========================================
+   [2] 공통 유틸리티 및 DB 연결 함수
+   ========================================= */
+void format_comma(long amt, char *out_str) {
+    char temp[50];
+    sprintf(temp, "%ld", amt);
+    int len = strlen(temp);
+    int comma_count = (len - 1) / 3;
+    int out_idx = len + comma_count;
+    out_str[out_idx] = '\0';
+    out_idx--;
+    int count = 0;
+    for (int i = len - 1; i >= 0; i--) {
+        out_str[out_idx--] = temp[i];
         count++;
-        if (count > 5) break;
-
-        /* VARCHAR 널문자 처리 */
-        h_trans_type.arr[h_trans_type.len] = '\0';
-        h_trans_date.arr[h_trans_date.len] = '\0';
-
-        printf(" %4d | %-10s | %15s원 | %s\n",
-                h_seq, h_trans_type.arr, format_comma(h_amount), h_trans_date.arr);
+        if (count % 3 == 0 && i != 0) {
+            out_str[out_idx--] = ',';
+        }
     }
-
-    /* 커서 닫기 */
-    EXEC SQL CLOSE history_cursor;
-    printf("==================================================\n");    
 }
 
+void connect_db() {
+    EXEC SQL CONNECT :user_id;
+    if (sqlca.sqlcode == 0) {
+        printf("2. 오라클 DB 연결 성공!\n");
+    } else {
+        printf("DB 연결 실패: %.*s\n", sqlca.sqlerrm.sqlerrml, sqlca.sqlerrm.sqlerrmc);
+        exit(1);
+    }
+}
+
+/* =========================================
+   [3] 비즈니스 로직 함수 (공통/관리자/고객)
+   ========================================= */
+
+/* 로그인 및 라우팅 (2: 관리자, 1: 일반, 0: 실패) */
 int login() {
-    char input_pw[10];
-    char db_pw[10];
+    char input_pw[15];
     
-    // 한글 출력 시 줄바꿈 문제 방지를 위해 printf를 단순화
     printf("\n계좌번호 입력: ");
     scanf("%s", acc_no);
 
-    /* PASSWD 컬럼 추가 여부 확인 필수 */
-    EXEC SQL SELECT USER_NAME, PASSWD INTO :user_name, :db_pw 
+    EXEC SQL SELECT USER_NAME, PASSWD, ROLE INTO :user_name, :db_pw, :db_role 
              FROM ACCOUNT WHERE ACC_NO = :acc_no;
 
     if (sqlca.sqlcode == 1403) {
@@ -262,9 +81,11 @@ int login() {
 
     printf("비밀번호 입력: ");
     scanf("%s", input_pw);
-
-    /* DB에서 가져온 PASSWD 뒤의 공백 제거 (중요) */
-    db_pw[4] = '\0'; 
+    
+    for(int i = 14; i >= 0; i--) { 
+        if(db_pw[i] == ' ' || db_pw[i] == '\0') db_pw[i] = '\0'; 
+        else break; 
+    }
 
     if (strcmp(input_pw, db_pw) != 0) {
         printf("[실패] 비밀번호 불일치\n");
@@ -272,19 +93,118 @@ int login() {
     }
 
     user_name.arr[user_name.len] = '\0';
-    printf("\n[환영합니다] %s 고객님\n", user_name.arr);
-    return 1;
+    printf("\n[환영합니다] %s님 접속 성공!\n", user_name.arr);
+    
+    if (db_role[0] == 'A') return 2; 
+    return 1; 
+}
+
+/* --- [관리자 전용 기능] --- */
+void admin_view_accounts() {
+    int count = 0;
+    char balance_str[50];
+
+    printf("\n==================================================\n");
+    printf("           [관리자 모드] 전체 계좌 현황\n");
+    printf("==================================================\n");
+    printf("%-15s | %-15s | %s\n", "계좌번호", "고객명", "잔액(원)");
+    printf("--------------------------------------------------\n");
+
+    EXEC SQL DECLARE acc_cursor CURSOR FOR
+        SELECT ACC_NO, USER_NAME, BALANCE FROM ACCOUNT ORDER BY ACC_NO;
+
+    EXEC SQL OPEN acc_cursor;
+    EXEC SQL WHENEVER NOT FOUND DO break;
+
+    while (1) {
+        EXEC SQL FETCH acc_cursor INTO :a_acc_no, :a_user_name, :a_balance;
+        a_user_name.arr[a_user_name.len] = '\0'; 
+        format_comma(a_balance, balance_str);
+
+        for(int i = 19; i >= 0; i--) { 
+            if(a_acc_no[i] == ' ' || a_acc_no[i] == '\0') a_acc_no[i] = '\0'; 
+            else break; 
+        }
+
+        printf("%-15s | %-15s | %15s\n", a_acc_no, a_user_name.arr, balance_str);
+        count++;
+    }
+
+    EXEC SQL CLOSE acc_cursor;
+
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+    
+    printf("--------------------------------------------------\n");
+    printf("총 %d개의 계좌가 조회되었습니다.\n", count);
+}
+
+/* --- [고객 전용 기능] --- */
+void check_balance() {
+    char bal_str[50];
+    EXEC SQL SELECT BALANCE INTO :current_balance FROM ACCOUNT WHERE ACC_NO = :acc_no;
+    format_comma(current_balance, bal_str);
+    printf("\n현재 잔액: %s원\n", bal_str);
+}
+
+void deposit() {
+    printf("\n입금할 금액: ");
+    scanf("%ld", &amount);
+    EXEC SQL UPDATE ACCOUNT SET BALANCE = BALANCE + :amount WHERE ACC_NO = :acc_no;
+    EXEC SQL COMMIT;
+    printf("[%ld원] 입금 완료.\n", amount);
+}
+
+void withdraw() {
+    printf("\n출금할 금액: ");
+    scanf("%ld", &amount);
+    EXEC SQL SELECT BALANCE INTO :current_balance FROM ACCOUNT WHERE ACC_NO = :acc_no;
+    
+    if (current_balance < amount) {
+        printf("[실패] 잔액이 부족합니다.\n");
+        return;
+    }
+    EXEC SQL UPDATE ACCOUNT SET BALANCE = BALANCE - :amount WHERE ACC_NO = :acc_no;
+    EXEC SQL COMMIT;
+    printf("[%ld원] 출금 완료.\n", amount);
+}
+
+void transfer() {
+    printf("\n대상 계좌번호: ");
+    scanf("%s", target_acc);
+    
+    EXEC SQL SELECT USER_NAME INTO :target_name FROM ACCOUNT WHERE ACC_NO = :target_acc;
+    if (sqlca.sqlcode == 1403) {
+        printf("[실패] 존재하지 않는 계좌입니다.\n");
+        return;
+    }
+    
+    printf("이체할 금액: ");
+    scanf("%ld", &amount);
+    
+    EXEC SQL SELECT BALANCE INTO :current_balance FROM ACCOUNT WHERE ACC_NO = :acc_no;
+    if (current_balance < amount) {
+        printf("[실패] 잔액 부족.\n");
+        return;
+    }
+
+    EXEC SQL UPDATE ACCOUNT SET BALANCE = BALANCE - :amount WHERE ACC_NO = :acc_no;
+    EXEC SQL UPDATE ACCOUNT SET BALANCE = BALANCE + :amount WHERE ACC_NO = :target_acc;
+    EXEC SQL COMMIT;
+    
+    target_name.arr[target_name.len] = '\0';
+    printf("[%s]님에게 %ld원 이체 완료.\n", target_name.arr, amount);
 }
 
 void change_password() {
-    char cur_pw[10], n_pw[10], c_pw[10], db_p[10];
-
-    printf("\n--- 비밀번호 변경 ---\n");
-    printf("현재 PW: ");
+    char cur_pw[15], c_pw[15];
+    printf("\n현재 PW: ");
     scanf("%s", cur_pw);
 
     EXEC SQL SELECT PASSWD INTO :db_p FROM ACCOUNT WHERE ACC_NO = :acc_no;
-    db_p[4] = '\0';
+    for(int i = 14; i >= 0; i--) { 
+        if(db_p[i] == ' ' || db_p[i] == '\0') db_p[i] = '\0'; 
+        else break; 
+    }
 
     if (strcmp(cur_pw, db_p) != 0) {
         printf("[실패] 현재 비밀번호 오류\n");
@@ -297,51 +217,79 @@ void change_password() {
     scanf("%s", c_pw);
 
     if (strcmp(n_pw, c_pw) != 0) {
-        printf("[실패] 일치하지 않음\n");
+        printf("[실패] 입력값이 일치하지 않음\n");
         return;
     }
 
     EXEC SQL UPDATE ACCOUNT SET PASSWD = :n_pw WHERE ACC_NO = :acc_no;
     EXEC SQL COMMIT;
-    printf("[성공] 변경 완료\n");
+    printf("[성공] 비밀번호가 변경되었습니다.\n");
 }
 
-/* ================= 메인 함수 ================= */
+/* =========================================
+   [4] 메인 프로그램 (라우팅 제어)
+   ========================================= */
 int main() {
-    putenv("NLS_LANG=KOREAN_KOREA.AL32UTF8");
+    int login_status;
     int choice;
 
     printf("1. 시스템 부팅 중...\n");
-    EXEC SQL CONNECT :user_id;
-    if (sqlca.sqlcode < 0) sql_error("DB 연결 실패!");
-    printf("2. 오라클 DB 연결 성공!\n");
-
-    while(!login()) {
-        printf("다시 시도해주세요.\n");
-    }
+    connect_db();
 
     while(1) {
-        printf("\n========== C-STOCK ATM ==========\n");
-        printf(" 1. 잔액조회  2. 입금  3. 출금  4. 계좌이체  5. 거래내역 6. 종료\n");
-        printf("=================================\n");
-        printf("메뉴를 선택하세요: ");
+        printf("\n==================================================\n");
+        printf("              C-Stock ATM 시스템\n");
+        printf("==================================================\n");
+        printf(" 1. 로그인 (Login)\n");
+        printf(" 2. 시스템 종료 (Exit)\n");
+        printf("선택: ");
+        
         scanf("%d", &choice);
 
-        if (choice == 6) {
-            printf("\n이용해 주셔서 감사합니다. 시스템을 종료합니다.\n");
+        if (choice == 2) {
+            printf("[시스템] 안전하게 종료합니다.\n");
             break;
         }
+        if (choice != 1) continue;
 
-        switch(choice) {
-            case 1: check_balance(); break;
-            case 2: do_deposit(); break;
-            case 3: do_withdraw(); break;
-            case 4: do_transfer(); break;
-            case 5: show_history(); break;\
-            default: printf("\n[경고] 잘못된 메뉴를 선택하셨습니다. (1~6 입력)\n");
+        login_status = login();
+
+        if (login_status == 2) {
+            /* 👑 [세션 분기 A: 관리자] */
+            while(1) {
+                printf("\n--- [슈퍼 관리자 시스템] ---\n");
+                printf("1. 전체 계좌 현황 조회\n");
+                printf("2. 로그아웃\n");
+                printf("선택: ");
+                scanf("%d", &choice);
+
+                if (choice == 1) admin_view_accounts();
+                else if (choice == 2) break;
+            }
+        } 
+        else if (login_status == 1) {
+            /* 👤 [세션 분기 B: 고객] */
+            while(1) {
+                printf("\n--- [고객 뱅킹 서비스] ---\n");
+                printf("1. 잔액 조회\n");
+                printf("2. 입금\n");
+                printf("3. 출금\n");
+                printf("4. 계좌 이체\n");
+                printf("5. 비밀번호 변경\n");
+                printf("6. 로그아웃\n");
+                printf("선택: ");
+                scanf("%d", &choice);
+
+                if (choice == 1) check_balance();
+                else if (choice == 2) deposit();
+                else if (choice == 3) withdraw();
+                else if (choice == 4) transfer();
+                else if (choice == 5) change_password();
+                else if (choice == 6) break;
+            }
         }
     }
-
+    
     EXEC SQL COMMIT WORK RELEASE;
     return 0;
 }
